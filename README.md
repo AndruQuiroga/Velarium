@@ -4,10 +4,10 @@ A centralized control panel for spinning up, monitoring and managing a minecraft
 
 ## 🎯 Features
 
-- **Master API (FastAPI)**  
-  • Spawn, list, start, stop, remove minecraft server containers  
-  • Persistent metadata in PostgreSQL  
-  • Admin-only access (HTTP Basic auth for now)  
+- **Master API (FastAPI)**
+  • Spawn, list, start, stop, remove minecraft server containers
+  • Persistent metadata in PostgreSQL
+  • Single-admin login via session or token-based auth
 
 - **Web UI (React + Tailwind)**  
   • File explorer / editor for each server’s config & plugins  
@@ -21,6 +21,14 @@ A centralized control panel for spinning up, monitoring and managing a minecraft
 
 ## 🚀 Quickstart
 _Work-in-progress — full instructions coming as the stack solidifies._
+
+## 🔐 Authentication & Authorization
+
+Velarium currently targets a single administrator. After logging in with the
+admin credentials, the backend issues either a session cookie (for browser
+access) or a bearer token (for API clients). All subsequent requests to
+protected endpoints must include the session or token. This setup keeps the
+panel private while laying the groundwork for future multi-user support.
 
 ## 🛠️ Roadmap / TODO
 
