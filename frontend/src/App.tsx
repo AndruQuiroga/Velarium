@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import ServerList from './components/ServerList';
 import Login from './components/Login';
+import RequireAuth from './components/RequireAuth';
 
 function App() {
   return (
@@ -14,7 +15,7 @@ function App() {
         </nav>
         <main className="container mx-auto flex-1 p-4">
           <Routes>
-            <Route path="/" element={<ServerList />} />
+            <Route path="/" element={<RequireAuth><ServerList /></RequireAuth>} />
             <Route path="/login" element={<Login />} />
           </Routes>
         </main>
