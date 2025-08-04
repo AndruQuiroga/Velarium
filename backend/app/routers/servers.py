@@ -31,3 +31,4 @@ def list_images():
 @router.get("/")
 def list_servers():
     return {"servers": []}
+

@@ -15,7 +15,6 @@ import docker
 import httpx
 from docker.errors import APIError, BuildError, ImageNotFound
 
-
 # Labels applied to images built by Velarium
 PROJECT_LABEL_KEY = "velarium.project"
 PROJECT_LABEL_VALUE = "velarium"
