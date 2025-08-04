@@ -9,7 +9,7 @@ from backend.app.services.docker_manager import DockerManager
 
 
 class DummyClient:
-    def __init__(self, build_func):
+    def __init__(self, build_func, image_exists=False):
         class API:
             def __init__(self, func):
                 self._func = func
@@ -17,10 +17,20 @@ class DummyClient:
             def build(self, **kwargs):
                 return self._func(**kwargs)
 
+        class Images:
+            def __init__(self, exists):
+                self.exists = exists
+
+            def get(self, tag):
+                if self.exists:
+                    return type("Image", (), {"id": "imgid"})
+                raise docker.errors.ImageNotFound("not found")
+
         self.api = API(build_func)
+        self.images = Images(image_exists)
 
 
-def test_build_image_success(monkeypatch):
+def test_build_image_success(monkeypatch, tmp_path):
     logs = [{"stream": "ok"}]
 
     def fake_build(fileobj, custom_context, tag, decode):
@@ -31,27 +41,32 @@ def test_build_image_success(monkeypatch):
         with tarfile.open(fileobj=fileobj, mode="r") as tar:
             dockerfile = tar.extractfile("Dockerfile").read().decode()
             assert "123" in dockerfile
+        client.images.exists = True
         return iter(logs)
 
-    monkeypatch.setattr(docker, "from_env", lambda: DummyClient(fake_build))
+    client = DummyClient(fake_build)
+    monkeypatch.setattr(docker, "from_env", lambda: client)
 
-    manager = DockerManager()
-    result = manager.build_image("FROM scratch\nRUN echo {version}\n", "123", "test:latest")
-    assert result == logs
+    manager = DockerManager(metadata_path=tmp_path / "meta.json")
+    result_logs, metadata = manager.build_image(
+        "FROM scratch\nRUN echo {version}\n", "123", "test:latest"
+    )
+    assert result_logs == logs
+    assert metadata == {"id": "imgid"}
 
 
-def test_build_image_error(monkeypatch):
+def test_build_image_error(monkeypatch, tmp_path):
     def fake_build(**kwargs):
         return iter([{ "error": "boom" }])
 
     monkeypatch.setattr(docker, "from_env", lambda: DummyClient(fake_build))
 
-    manager = DockerManager()
+    manager = DockerManager(metadata_path=tmp_path / "meta.json")
     with pytest.raises(docker.errors.BuildError):
         manager.build_image("FROM scratch", "1", "fail")
 
 
-def test_build_image_with_modpack(monkeypatch):
+def test_build_image_with_modpack(monkeypatch, tmp_path):
     logs = [{"stream": "ok"}]
 
     # Create an in-memory zip containing mods and config
@@ -86,12 +101,38 @@ def test_build_image_with_modpack(monkeypatch):
             names = tar.getnames()
             assert "mods/mod.jar" in names
             assert "config/conf.yml" in names
+        client.images.exists = True
         return iter(logs)
 
-    monkeypatch.setattr(docker, "from_env", lambda: DummyClient(fake_build))
+    client = DummyClient(fake_build)
+    monkeypatch.setattr(docker, "from_env", lambda: client)
 
-    manager = DockerManager()
-    result = manager.build_image(
+    manager = DockerManager(metadata_path=tmp_path / "meta.json")
+    result_logs, metadata = manager.build_image(
         "FROM scratch\n", "1", "test:latest", modpack_id="abc", source="modrinth"
     )
-    assert result == logs
+    assert result_logs == logs
+    assert metadata == {"id": "imgid"}
+
+
+def test_build_image_cached(monkeypatch, tmp_path):
+    logs = [{"stream": "ok"}]
+
+    def fake_build(fileobj, custom_context, tag, decode):
+        client.images.exists = True
+        return iter(logs)
+
+    client = DummyClient(fake_build)
+    monkeypatch.setattr(docker, "from_env", lambda: client)
+    manager = DockerManager(metadata_path=tmp_path / "meta.json")
+    manager.build_image("FROM scratch", "1", "test:latest")
+
+    def fail_build(**kwargs):  # pragma: no cover - should not run
+        raise AssertionError("build should not be called")
+
+    client2 = DummyClient(fail_build, image_exists=True)
+    monkeypatch.setattr(docker, "from_env", lambda: client2)
+    manager2 = DockerManager(metadata_path=tmp_path / "meta.json")
+    logs2, metadata2 = manager2.build_image("FROM scratch", "1", "test:latest")
+    assert logs2 == []
+    assert metadata2 == {"id": "imgid"}
