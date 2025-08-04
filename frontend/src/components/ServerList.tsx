@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import axios from 'axios';
 
 interface Server {
-  id: number;
+  id: string;
   name: string;
   status: string;
 }
@@ -11,7 +11,10 @@ export default function ServerList() {
   const [servers, setServers] = useState<Server[]>([]);
 
   useEffect(() => {
-    axios.get('/api/servers').then((res) => setServers(res.data)).catch(() => setServers([]));
+    axios
+      .get('/api/servers')
+      .then((res) => setServers(res.data.servers ?? []))
+      .catch(() => setServers([]));
   }, []);
 
   return (
