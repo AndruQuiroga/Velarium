@@ -1,0 +1,14 @@
+FROM eclipse-temurin:17-jre
+
+ENV EULA=TRUE
+ENV VERSION={{ version }}
+
+WORKDIR /data
+
+RUN curl -L -o server.jar https://api.papermc.io/v2/projects/paper/versions/${VERSION}/builds/latest/downloads/paper-${VERSION}.jar
+
+VOLUME ["/data"]
+
+EXPOSE 25565
+
+CMD ["java", "-Xms1G", "-Xmx1G", "-jar", "server.jar", "nogui"]

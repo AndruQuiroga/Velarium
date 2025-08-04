@@ -1,0 +1,17 @@
+FROM eclipse-temurin:17-jre
+
+ENV EULA=TRUE
+ENV VERSION={{ version }}
+
+WORKDIR /data
+
+RUN curl -L -o forge-installer.jar https://maven.minecraftforge.net/net/minecraftforge/forge/${VERSION}/forge-${VERSION}-installer.jar \
+    && java -jar forge-installer.jar --installServer \
+    && rm forge-installer.jar \
+    && mv forge-${VERSION}.jar server.jar
+
+VOLUME ["/data"]
+
+EXPOSE 25565
+
+CMD ["java", "-Xms1G", "-Xmx1G", "-jar", "server.jar", "nogui"]
