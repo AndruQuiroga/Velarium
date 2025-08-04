@@ -1,6 +1,4 @@
-import io
 import tarfile
-import zipfile
 
 import docker
 import httpx
@@ -38,8 +36,9 @@ class DummyClient:
         self.images = Images(image_exists)
 
 
-def test_build_image_success(monkeypatch, tmp_path):
+def test_build_image_success(monkeypatch, tmp_path, template_dir):
     logs = [{"stream": "ok"}]
+    template = (template_dir / "Dockerfile").read_text()
 
     def fake_build(fileobj, custom_context, tag, decode):
         assert custom_context is True
@@ -56,34 +55,27 @@ def test_build_image_success(monkeypatch, tmp_path):
     monkeypatch.setattr(docker, "from_env", lambda: client)
 
     manager = DockerManager(metadata_path=tmp_path / "meta.json")
-    result_logs, metadata = manager.build_image(
-        "FROM scratch\nRUN echo {version}\n", "123", "test:latest"
-    )
+    result_logs, metadata = manager.build_image(template, "123", "test:latest")
     assert result_logs == logs
     assert metadata == {"id": "imgid"}
 
 
-def test_build_image_error(monkeypatch, tmp_path):
+def test_build_image_error(monkeypatch, tmp_path, template_dir):
     def fake_build(**kwargs):
         return iter([{"error": "boom"}])
 
     monkeypatch.setattr(docker, "from_env", lambda: DummyClient(fake_build))
 
+    template = (template_dir / "Dockerfile").read_text()
     manager = DockerManager(metadata_path=tmp_path / "meta.json")
     with pytest.raises(docker.errors.BuildError):
-        manager.build_image("FROM scratch", "1", "fail")
+        manager.build_image(template, "1", "fail")
 
 
-def test_build_image_with_modpack(monkeypatch, tmp_path):
+def test_build_image_with_modpack(monkeypatch, tmp_path, template_dir, modpack_metadata):
     logs = [{"stream": "ok"}]
-
-    # Create an in-memory zip containing mods and config
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("mods/mod.jar", b"mod")
-        zf.writestr("config/conf.yml", b"cfg")
-    buf.seek(0)
-    archive_bytes = buf.read()
+    template = (template_dir / "Dockerfile").read_text()
+    archive_bytes, metadata = modpack_metadata
 
     def fake_httpx_get(url, *args, **kwargs):
         class Response:
@@ -98,7 +90,7 @@ def test_build_image_with_modpack(monkeypatch, tmp_path):
                 return self._json
 
         if url.startswith("https://api.modrinth.com"):
-            return Response(json_data=[{"files": [{"url": "https://download"}]}])
+            return Response(json_data=metadata)
         return Response(content=archive_bytes)
 
     monkeypatch.setattr(httpx, "get", fake_httpx_get)
@@ -116,15 +108,16 @@ def test_build_image_with_modpack(monkeypatch, tmp_path):
     monkeypatch.setattr(docker, "from_env", lambda: client)
 
     manager = DockerManager(metadata_path=tmp_path / "meta.json")
-    result_logs, metadata = manager.build_image(
-        "FROM scratch\n", "1", "test:latest", modpack_id="abc", source="modrinth"
+    result_logs, metadata_ret = manager.build_image(
+        template, "1", "test:latest", modpack_id="abc", source="modrinth"
     )
     assert result_logs == logs
-    assert metadata == {"id": "imgid"}
+    assert metadata_ret == {"id": "imgid"}
 
 
-def test_build_image_cached(monkeypatch, tmp_path):
+def test_build_image_cached(monkeypatch, tmp_path, template_dir):
     logs = [{"stream": "ok"}]
+    template = (template_dir / "Dockerfile").read_text()
 
     def fake_build(fileobj, custom_context, tag, decode):
         client.images.exists = True
@@ -133,7 +126,7 @@ def test_build_image_cached(monkeypatch, tmp_path):
     client = DummyClient(fake_build)
     monkeypatch.setattr(docker, "from_env", lambda: client)
     manager = DockerManager(metadata_path=tmp_path / "meta.json")
-    manager.build_image("FROM scratch", "1", "test:latest")
+    manager.build_image(template, "1", "test:latest")
 
     def fail_build(**kwargs):  # pragma: no cover - should not run
         raise AssertionError("build should not be called")
@@ -141,7 +134,7 @@ def test_build_image_cached(monkeypatch, tmp_path):
     client2 = DummyClient(fail_build, image_exists=True)
     monkeypatch.setattr(docker, "from_env", lambda: client2)
     manager2 = DockerManager(metadata_path=tmp_path / "meta.json")
-    logs2, metadata2 = manager2.build_image("FROM scratch", "1", "test:latest")
+    logs2, metadata2 = manager2.build_image(template, "1", "test:latest")
     assert logs2 == []
     assert metadata2 == {"id": "imgid"}
 
