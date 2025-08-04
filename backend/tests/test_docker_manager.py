@@ -5,7 +5,14 @@ import docker
 import httpx
 import pytest
 
-from backend.app.services.docker_manager import DockerManager
+from backend.app.services.docker_manager import (
+    BUILT_LABEL_KEY,
+    PROJECT_LABEL_KEY,
+    PROJECT_LABEL_VALUE,
+    TEMPLATE_LABEL_KEY,
+    VERSION_LABEL_KEY,
+    DockerManager,
+)
 
 
 class DummyClient:
@@ -95,3 +102,43 @@ def test_build_image_with_modpack(monkeypatch):
         "FROM scratch\n", "1", "test:latest", modpack_id="abc", source="modrinth"
     )
     assert result == logs
+
+
+def test_list_images(monkeypatch):
+    captured_filters = {}
+
+    class Images:
+        def list(self, *, filters):
+            captured_filters.update(filters)
+
+            class Img:
+                def __init__(self):
+                    self.tags = ["repo:tag"]
+                    self.attrs = {
+                        "Config": {
+                            "Labels": {
+                                PROJECT_LABEL_KEY: PROJECT_LABEL_VALUE,
+                                TEMPLATE_LABEL_KEY: "paper",
+                                VERSION_LABEL_KEY: "1.0",
+                                BUILT_LABEL_KEY: "123",
+                            }
+                        }
+                    }
+
+            return [Img()]
+
+    class Dummy:
+        def __init__(self):
+            self.images = Images()
+
+    monkeypatch.setattr(docker, "from_env", lambda: Dummy())
+
+    manager = DockerManager()
+    images = manager.list_images()
+
+    assert captured_filters == {
+        "label": f"{PROJECT_LABEL_KEY}={PROJECT_LABEL_VALUE}"
+    }
+    assert images == [
+        {"tag": "repo:tag", "template": "paper", "version": "1.0", "built": "123"}
+    ]

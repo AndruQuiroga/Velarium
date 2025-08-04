@@ -21,6 +21,13 @@ def build_server(payload: BuildPayload):
     return {"logs": logs}
 
 
+@router.get("/images")
+def list_images():
+    manager = DockerManager()
+    images = manager.list_images()
+    return {"images": images}
+
+
 @router.get("/")
 def list_servers():
     return {"servers": []}
