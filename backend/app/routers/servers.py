@@ -3,7 +3,11 @@ from pydantic import BaseModel
 from docker.errors import BuildError
 
 from ..auth import require_admin
-from ..services.docker_manager import DockerManager
+from ..services.docker_manager import (
+    DockerManager,
+    PROJECT_LABEL_KEY,
+    PROJECT_LABEL_VALUE,
+)
 from ..models.build_log import BuildLog, build_logs
 
 router = APIRouter(prefix="/servers", dependencies=[Depends(require_admin)])
@@ -48,5 +52,26 @@ def list_images():
 
 @router.get("/")
 def list_servers():
-    return {"servers": []}
+    """Return information about available server containers."""
+
+    manager = DockerManager()
+    try:
+        containers = manager.client.containers.list(
+            all=True,
+            filters={"label": f"{PROJECT_LABEL_KEY}={PROJECT_LABEL_VALUE}"},
+        )
+    except Exception as exc:  # pragma: no cover - docker issues
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    servers = []
+    for container in containers:
+        servers.append(
+            {
+                "id": container.id,
+                "name": container.name,
+                "status": container.status,
+            }
+        )
+
+    return {"servers": servers}
 
