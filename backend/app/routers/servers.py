@@ -17,8 +17,8 @@ class BuildPayload(BaseModel):
 def build_server(payload: BuildPayload):
     manager = DockerManager()
     tag = payload.tag or "latest"
-    logs = manager.build_image(payload.template, payload.version, tag)
-    return {"logs": logs}
+    logs, metadata = manager.build_image(payload.template, payload.version, tag)
+    return {"logs": logs, "metadata": metadata}
 
 
 @router.get("/images")

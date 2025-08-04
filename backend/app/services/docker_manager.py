@@ -4,15 +4,16 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import tarfile
 import tempfile
 import zipfile
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import docker
 import httpx
-from docker.errors import APIError, BuildError
+from docker.errors import APIError, BuildError, ImageNotFound
 
 
 # Labels applied to images built by Velarium
@@ -24,15 +25,20 @@ BUILT_LABEL_KEY = "velarium.built"
 
 
 class DockerManager:
-    """Thin wrapper around the Docker SDK.
+    """Thin wrapper around the Docker SDK with simple build caching."""
 
-    The class currently exposes a :py:meth:`build_image` method which builds a
-    docker image from a given Dockerfile template.  The implementation uses the
-    low level API in order to stream build logs back to the caller.
-    """
-
-    def __init__(self) -> None:  # pragma: no cover - trivial
+    def __init__(self, metadata_path: str = "build_metadata.json") -> None:
         self.client = docker.from_env()
+        self.metadata_path = metadata_path
+        if os.path.exists(self.metadata_path):
+            with open(self.metadata_path, "r", encoding="utf-8") as f:
+                self._metadata = json.load(f)
+        else:  # pragma: no cover - trivial
+            self._metadata = {}
+
+    def _save_metadata(self) -> None:
+        with open(self.metadata_path, "w", encoding="utf-8") as f:
+            json.dump(self._metadata, f)
 
     # ------------------------------------------------------------------
     def list_images(self) -> List[Dict[str, str]]:
@@ -72,8 +78,8 @@ class DockerManager:
         tag: str,
         modpack_id: Optional[str] = None,
         source: Optional[str] = None,
-    ) -> List[Dict[str, str]]:
-        """Build a docker image using a template string.
+    ) -> Tuple[List[Dict[str, str]], Dict[str, str]]:
+        """Build a docker image using a template string or return cached metadata.
 
         Parameters
         ----------
@@ -90,14 +96,25 @@ class DockerManager:
 
         Returns
         -------
-        list of dict
-            Structured build logs returned from the docker daemon.
+        tuple
+            ``(logs, metadata)`` where ``logs`` is the structured build logs and
+            ``metadata`` contains information about the built image (currently
+            the image id).
 
         Raises
         ------
         docker.errors.BuildError
             If the build fails or the API reports an error.
         """
+
+        # Check for existing image and short-circuit if present
+        if tag in self._metadata:
+            try:
+                self.client.images.get(tag)
+                return [], self._metadata[tag]
+            except ImageNotFound:
+                del self._metadata[tag]
+                self._save_metadata()
 
         # Assemble the Dockerfile by interpolating the provided version
         dockerfile_contents = template.format(version=version)
@@ -142,7 +159,12 @@ class DockerManager:
                 logs.append(chunk)
                 if "error" in chunk:
                     raise BuildError(chunk["error"], build_log=logs)
-            return logs
+
+            image = self.client.images.get(tag)
+            metadata = {"id": image.id}
+            self._metadata[tag] = metadata
+            self._save_metadata()
+            return logs, metadata
         except APIError as exc:  # pragma: no cover - network / docker issues
             raise BuildError(str(exc), build_log=[]) from exc
 
