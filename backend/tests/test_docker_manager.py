@@ -1,15 +1,23 @@
 import io
 import tarfile
 import zipfile
+
 import docker
 import httpx
 import pytest
 
-from backend.app.services.docker_manager import DockerManager
+from backend.app.services.docker_manager import (
+    BUILT_LABEL_KEY,
+    PROJECT_LABEL_KEY,
+    PROJECT_LABEL_VALUE,
+    TEMPLATE_LABEL_KEY,
+    VERSION_LABEL_KEY,
+    DockerManager,
+)
 
 
 class DummyClient:
-    def __init__(self, build_func, image_exists=False):
+    def __init__(self, build_func, image_exists: bool = False):
         class API:
             def __init__(self, func):
                 self._func = func
@@ -57,7 +65,7 @@ def test_build_image_success(monkeypatch, tmp_path):
 
 def test_build_image_error(monkeypatch, tmp_path):
     def fake_build(**kwargs):
-        return iter([{ "error": "boom" }])
+        return iter([{"error": "boom"}])
 
     monkeypatch.setattr(docker, "from_env", lambda: DummyClient(fake_build))
 
@@ -136,3 +144,44 @@ def test_build_image_cached(monkeypatch, tmp_path):
     logs2, metadata2 = manager2.build_image("FROM scratch", "1", "test:latest")
     assert logs2 == []
     assert metadata2 == {"id": "imgid"}
+
+
+def test_list_images(monkeypatch):
+    captured_filters = {}
+
+    class Images:
+        def list(self, *, filters):
+            captured_filters.update(filters)
+
+            class Img:
+                def __init__(self):
+                    self.tags = ["repo:tag"]
+                    self.attrs = {
+                        "Config": {
+                            "Labels": {
+                                PROJECT_LABEL_KEY: PROJECT_LABEL_VALUE,
+                                TEMPLATE_LABEL_KEY: "paper",
+                                VERSION_LABEL_KEY: "1.0",
+                                BUILT_LABEL_KEY: "123",
+                            }
+                        }
+                    }
+
+            return [Img()]
+
+    class Dummy:
+        def __init__(self):
+            self.images = Images()
+
+    monkeypatch.setattr(docker, "from_env", lambda: Dummy())
+
+    manager = DockerManager()
+    images = manager.list_images()
+
+    assert captured_filters == {
+        "label": f"{PROJECT_LABEL_KEY}={PROJECT_LABEL_VALUE}"
+    }
+    assert images == [
+        {"tag": "repo:tag", "template": "paper", "version": "1.0", "built": "123"}
+    ]
+

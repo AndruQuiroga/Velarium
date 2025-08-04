@@ -15,6 +15,13 @@ import docker
 import httpx
 from docker.errors import APIError, BuildError, ImageNotFound
 
+# Labels applied to images built by Velarium
+PROJECT_LABEL_KEY = "velarium.project"
+PROJECT_LABEL_VALUE = "velarium"
+TEMPLATE_LABEL_KEY = "velarium.template"
+VERSION_LABEL_KEY = "velarium.version"
+BUILT_LABEL_KEY = "velarium.built"
+
 
 class DockerManager:
     """Thin wrapper around the Docker SDK with simple build caching."""
@@ -31,6 +38,37 @@ class DockerManager:
     def _save_metadata(self) -> None:
         with open(self.metadata_path, "w", encoding="utf-8") as f:
             json.dump(self._metadata, f)
+
+    # ------------------------------------------------------------------
+    def list_images(self) -> List[Dict[str, str]]:
+        """Return metadata about images built by Velarium.
+
+        The method queries the Docker daemon for images carrying the project
+        label and extracts additional metadata from other labels applied to the
+        image during the build process.
+        """
+
+        images = self.client.images.list(
+            filters={"label": f"{PROJECT_LABEL_KEY}={PROJECT_LABEL_VALUE}"}
+        )
+
+        result: List[Dict[str, str]] = []
+        for image in images:
+            labels = getattr(image, "labels", None)
+            if labels is None:
+                labels = image.attrs.get("Config", {}).get("Labels", {})
+
+            tag = image.tags[0] if getattr(image, "tags", None) else None
+            result.append(
+                {
+                    "tag": tag,
+                    "template": labels.get(TEMPLATE_LABEL_KEY, ""),
+                    "version": labels.get(VERSION_LABEL_KEY, ""),
+                    "built": labels.get(BUILT_LABEL_KEY, ""),
+                }
+            )
+
+        return result
 
     def build_image(
         self,
