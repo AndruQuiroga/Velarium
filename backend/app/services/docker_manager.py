@@ -4,10 +4,14 @@
 from __future__ import annotations
 
 import io
+import os
 import tarfile
-from typing import Dict, List
+import tempfile
+import zipfile
+from typing import Dict, List, Optional
 
 import docker
+import httpx
 from docker.errors import APIError, BuildError
 
 
@@ -22,7 +26,14 @@ class DockerManager:
     def __init__(self) -> None:  # pragma: no cover - trivial
         self.client = docker.from_env()
 
-    def build_image(self, template: str, version: str, tag: str) -> List[Dict[str, str]]:
+    def build_image(
+        self,
+        template: str,
+        version: str,
+        tag: str,
+        modpack_id: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> List[Dict[str, str]]:
         """Build a docker image using a template string.
 
         Parameters
@@ -33,6 +44,10 @@ class DockerManager:
             Version string to substitute into the template.
         tag:
             Name of the resulting docker image tag.
+        modpack_id:
+            Optional identifier of a modpack to embed into the image.
+        source:
+            Source of the modpack. Either ``"modrinth"`` or ``"curseforge"``.
 
         Returns
         -------
@@ -48,15 +63,31 @@ class DockerManager:
         # Assemble the Dockerfile by interpolating the provided version
         dockerfile_contents = template.format(version=version)
 
-        # Create a tar archive to use as the build context containing only the
-        # Dockerfile.  The Docker SDK expects a file-like object positioned at
-        # the start of the tar stream.
+        # Create a tar archive to use as the build context containing the
+        # Dockerfile and optional modpack contents.  The Docker SDK expects a
+        # file-like object positioned at the start of the tar stream.
         fileobj = io.BytesIO()
         with tarfile.open(fileobj=fileobj, mode="w") as tar:
             data = dockerfile_contents.encode("utf-8")
             info = tarfile.TarInfo("Dockerfile")
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
+
+            if modpack_id and source:
+                archive = self._download_modpack(modpack_id, source)
+                with tempfile.TemporaryDirectory() as tmp:
+                    archive_path = os.path.join(tmp, "modpack.zip")
+                    with open(archive_path, "wb") as f:
+                        f.write(archive)
+                    with zipfile.ZipFile(archive_path) as zf:
+                        zf.extractall(tmp)
+
+                    # locate and add mods/config directories
+                    for name in ("mods", "config"):
+                        for root, dirs, _files in os.walk(tmp):
+                            if os.path.basename(root) == name:
+                                tar.add(root, arcname=name)
+                                break
         fileobj.seek(0)
 
         try:
@@ -75,4 +106,27 @@ class DockerManager:
             return logs
         except APIError as exc:  # pragma: no cover - network / docker issues
             raise BuildError(str(exc), build_log=[]) from exc
+
+    # ------------------------------------------------------------------
+    def _download_modpack(self, modpack_id: str, source: str) -> bytes:
+        """Download a modpack archive from the specified ``source``."""
+
+        if source == "modrinth":
+            resp = httpx.get(f"https://api.modrinth.com/v2/project/{modpack_id}/version")
+            resp.raise_for_status()
+            versions = resp.json()
+            files = versions[0]["files"]
+            download_url = files[0]["url"]
+            file_resp = httpx.get(download_url)
+            file_resp.raise_for_status()
+            return file_resp.content
+        if source == "curseforge":
+            resp = httpx.get(f"https://api.curseforge.com/v1/mods/{modpack_id}/files")
+            resp.raise_for_status()
+            data = resp.json()["data"][0]
+            download_url = data["downloadUrl"]
+            file_resp = httpx.get(download_url)
+            file_resp.raise_for_status()
+            return file_resp.content
+        raise ValueError(f"Unknown source: {source}")
 
